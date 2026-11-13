@@ -1,0 +1,95 @@
+name: Initial signed APK release
+
+on:
+  push:
+    branches: [ arena/5a781c5d-cloudstream-revanced ]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    if: contains(github.event.head_commit.message, '[release-bootstrap]')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v5
+      - name: Refuse to overwrite an existing release or tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v1.0.0-revanced" >/dev/null 2>&1; then
+            echo 'The release tag already exists; do not generate a new signing key.' >&2
+            exit 1
+          fi
+      - name: Generate signing key and encrypted recovery backup
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/revanced-private" "$RUNNER_TEMP/revanced-backup"
+          openssl rand -hex 32 > "$RUNNER_TEMP/revanced-private/password.txt"
+          KEY_PASSWORD="$(cat "$RUNNER_TEMP/revanced-private/password.txt")"
+          echo "::add-mask::$KEY_PASSWORD"
+          keytool -genkeypair -keystore "$RUNNER_TEMP/revanced-private/revanced.jks" \
+            -storetype PKCS12 -storepass "$KEY_PASSWORD" -keypass "$KEY_PASSWORD" \
+            -alias revanced -keyalg RSA -keysize 3072 -validity 10000 \
+            -dname 'CN=Cloudstream Revanced, OU=Release, O=Cloudstream Revanced, C=IN' -noprompt
+          tar -czf "$RUNNER_TEMP/revanced-private/signing-material.tar.gz" -C "$RUNNER_TEMP/revanced-private" revanced.jks password.txt
+          openssl rand -hex 32 > "$RUNNER_TEMP/revanced-private/backup-password.txt"
+          openssl enc -aes-256-cbc -salt -pbkdf2 -iter 600000 \
+            -in "$RUNNER_TEMP/revanced-private/signing-material.tar.gz" \
+            -out "$RUNNER_TEMP/revanced-backup/signing-material.enc" \
+            -pass file:"$RUNNER_TEMP/revanced-private/backup-password.txt"
+          openssl pkeyutl -encrypt -pubin -inkey .github/revanced-recovery-public.pem \
+            -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 \
+            -in "$RUNNER_TEMP/revanced-private/backup-password.txt" \
+            -out "$RUNNER_TEMP/revanced-backup/wrapped-password.bin"
+          mkdir -p artifacts
+          tar -czf artifacts/cloudstream-revanced-encrypted-signing-backup.tar.gz -C "$RUNNER_TEMP/revanced-backup" signing-material.enc wrapped-password.bin
+      - name: Build signed APKs
+        shell: bash
+        env:
+          SIGNING_STORE_FILE: ${{ runner.temp }}/revanced-private/revanced.jks
+          SIGNING_KEY_ALIAS: revanced
+          SIMKL_CLIENT_ID: ${{ secrets.SIMKL_CLIENT_ID }}
+          SIMKL_CLIENT_SECRET: ${{ secrets.SIMKL_CLIENT_SECRET }}
+          MAL_KEY: ${{ secrets.MAL_KEY }}
+          ANILIST_KEY: ${{ secrets.ANILIST_KEY }}
+        run: |
+          set -euo pipefail
+          export SIGNING_KEY_PASSWORD="$(cat "$RUNNER_TEMP/revanced-private/password.txt")"
+          export SIGNING_STORE_PASSWORD="$SIGNING_KEY_PASSWORD"
+          echo "::add-mask::$SIGNING_KEY_PASSWORD"
+          ./gradlew :app:assembleStableRelease
+      - name: Verify signatures and application ID
+        shell: bash
+        run: |
+          set -euo pipefail
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)"
+          AAPT="$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)"
+          test -n "$APKSIGNER" && test -n "$AAPT"
+          for abi in arm64-v8a armeabi-v7a universal; do
+            mapfile -t files < <(find app/build/outputs/apk/stable/release -name "*${abi}*release.apk")
+            test "${#files[@]}" -eq 1
+            "$APKSIGNER" verify --verbose "${files[0]}"
+            "$AAPT" dump badging "${files[0]}" | grep -q "package: name='com.cloudstream.revanced'"
+            cp "${files[0]}" "artifacts/cloudstream-revanced-${abi}.apk"
+          done
+      - name: Publish verified APKs and encrypted recovery backup
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create v1.0.0-revanced artifacts/*.apk artifacts/cloudstream-revanced-encrypted-signing-backup.tar.gz \
+            --target "$GITHUB_SHA" --title 'Cloudstream Revanced v1.0.0' --notes-file RELEASE_NOTES.md
+      - name: Remove plaintext signing material
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/revanced-private"
