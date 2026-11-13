@@ -15,9 +15,11 @@ and a new tag:
 - `REVANCED_KEY_ALIAS`, `REVANCED_KEY_PASSWORD`, `REVANCED_STORE_PASSWORD`
 - Optional upstream API keys: `SIMKL_CLIENT_ID`, `SIMKL_CLIENT_SECRET`, `MAL_KEY`, `ANILIST_KEY`
 
-Use the same keystore for every release. A new key cannot upgrade an existing
-Cloudstream installation signed with a different key, even with the same package
-name. Debug artifacts use a different application ID and debug signing, and are
-not published as releases. The universal APK also includes x86 and x86_64.
+The stable release application ID is `com.cloudstream.revanced`, so it installs
+separately from upstream Cloudstream and does not automatically inherit its data.
+Use the same keystore for every Revanced release; a different signing key cannot
+upgrade an existing Revanced installation. Debug artifacts use the
+`com.cloudstream.revanced.debug` application ID and debug signing, and are not
+published as releases. The universal APK also includes x86 and x86_64.
 The workflow verifies APK signatures before publishing. Release notes are in
 `RELEASE_NOTES.md`; update them to reflect future changes before publishing.
