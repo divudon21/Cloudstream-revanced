@@ -2,7 +2,7 @@ name: Revanced APK build and release
 
 on:
   push:
-    branches: [ arena/098370c9-cloudstream-revanced ]
+    branches: [ arena/5a781c5d-cloudstream-revanced ]
   workflow_dispatch:
     inputs:
       publish:
@@ -45,9 +45,26 @@ jobs:
           path: artifacts/*.apk
           if-no-files-found: error
 
+  validate-signing:
+    if: (github.event_name == 'workflow_dispatch' && inputs.publish) || (github.event_name == 'push' && github.ref == 'refs/heads/arena/5a781c5d-cloudstream-revanced' && contains(github.event.head_commit.message, '[release]'))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check required signing secrets
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.REVANCED_KEYSTORE_BASE64 }}
+          SIGNING_KEY_ALIAS: ${{ secrets.REVANCED_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.REVANCED_KEY_PASSWORD }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.REVANCED_STORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in KEYSTORE_BASE64 SIGNING_KEY_ALIAS SIGNING_KEY_PASSWORD SIGNING_STORE_PASSWORD; do
+            [[ -n "${!name}" ]] || { echo "Missing required signing secret: $name" >&2; exit 1; }
+          done
+
   release:
-    if: github.event_name == 'workflow_dispatch' && inputs.publish
-    needs: build
+    if: (github.event_name == 'workflow_dispatch' && inputs.publish) || (github.event_name == 'push' && github.ref == 'refs/heads/arena/5a781c5d-cloudstream-revanced' && contains(github.event.head_commit.message, '[release]'))
+    needs: [build, validate-signing]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -61,7 +78,7 @@ jobs:
       - name: Validate release configuration and prepare signing key
         shell: bash
         env:
-          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || 'v1.0.0-revanced' }}
           KEYSTORE_BASE64: ${{ secrets.REVANCED_KEYSTORE_BASE64 }}
           SIGNING_KEY_ALIAS: ${{ secrets.REVANCED_KEY_ALIAS }}
           SIGNING_KEY_PASSWORD: ${{ secrets.REVANCED_KEY_PASSWORD }}
@@ -101,6 +118,6 @@ jobs:
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || 'v1.0.0-revanced' }}
         run: |
           gh release create "$RELEASE_TAG" artifacts/*.apk --target "$GITHUB_SHA" --title "Cloudstream Revanced $RELEASE_TAG" --notes-file RELEASE_NOTES.md

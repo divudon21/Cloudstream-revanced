@@ -5,7 +5,9 @@ This repository imports Cloudstream from `recloudstream/cloudstream` at commit
 Next Player; its source code was not copied. Cloudstream's license and upstream
 attribution are retained.
 
-Pushes to the Arena working branch build three debug APKs as a workflow artifact.
+Pushes to the current Arena working branch build three debug APKs as a workflow artifact.
+A commit marked `[release]` on that branch also attempts the signed release with
+tag `v1.0.0-revanced`, after the build and signing-secret validation succeed.
 For a signed release, the workflow must first exist on the repository's default
 branch (GitHub's requirement for `workflow_dispatch`). Set these repository
 Actions secrets, then run **Revanced APK build and release** with `publish` checked
